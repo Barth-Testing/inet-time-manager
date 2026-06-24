@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  inet-time-manager:
+    build: .
+    container_name: inet-time-manager
+    ports:
+      - "1337:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
