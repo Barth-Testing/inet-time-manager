@@ -35,16 +35,30 @@ function getTimeOptions(start: string, end: string) {
   return options
 }
 
+function nowMinutes() {
+  const d = new Date()
+  return d.getHours() * 60 + d.getMinutes()
+}
+
+function parseTime(t: string) {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
+
+function formatDuration(min: number) {
+  const h = Math.floor(Math.abs(min) / 60)
+  const m = Math.abs(min) % 60
+  return `${h}h ${m}min`
+}
+
 export default function HomePage() {
   const today = format(new Date(), 'yyyy-MM-dd')
   const dayOfWeek = getDay(new Date())
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-
   const dayName = format(new Date(), 'EEEE', { locale: de })
 
-  const [timeWindows, setTimeWindows] = useState<TimeWindow[]>([
-    { start: '14:00', end: '15:00' }
-  ])
+  const [timeWindows, setTimeWindows] = useState<TimeWindow[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [warnings, setWarnings] = useState<string[]>([])
   const [success, setSuccess] = useState('')
@@ -53,27 +67,70 @@ export default function HomePage() {
   const [parentError, setParentError] = useState('')
   const [pendingAction, setPendingAction] = useState<'holiday' | 'override' | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const [totalMinutes, setTotalMinutes] = useState(0)
+  const [syncStatus, setSyncStatus] = useState<string | null>(null)
+  const [nowMin, setNowMin] = useState(nowMinutes)
 
   const allowedStart = '10:00'
   const allowedEnd = isWeekend ? '23:30' : '21:30'
   const maxHours = isWeekend ? 4.5 : 3
+  const maxMin = maxHours * 60
 
   const allTimeOptions = useMemo(() => getTimeOptions(allowedStart, allowedEnd), [allowedStart, allowedEnd])
 
-  const calcTotal = useCallback((windows: TimeWindow[]) => {
-    let total = 0
-    for (const w of windows) {
-      const [sh, sm] = w.start.split(':').map(Number)
-      const [eh, em] = w.end.split(':').map(Number)
-      total += (eh * 60 + em) - (sh * 60 + sm)
-    }
-    return total
+  useEffect(() => {
+    loadSchedule()
+    const tick = setInterval(() => setNowMin(nowMinutes()), 60000)
+    return () => clearInterval(tick)
   }, [])
 
+  async function loadSchedule() {
+    try {
+      const res = await fetch(`/api/schedule?date=${today}`)
+      const result = await res.json()
+      if (result.success && result.data?.timeWindows?.length) {
+        setTimeWindows(result.data.timeWindows)
+      } else {
+        setTimeWindows([{ start: '14:00', end: '15:00' }])
+      }
+    } catch {
+      setTimeWindows([{ start: '14:00', end: '15:00' }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function isFuture(window: TimeWindow) {
+    return parseTime(window.start) > nowMin
+  }
+
+  function isRunning(window: TimeWindow) {
+    return parseTime(window.start) <= nowMin && nowMin < parseTime(window.end)
+  }
+
+  function isPast(window: TimeWindow) {
+    return nowMin >= parseTime(window.end)
+  }
+
+  const calcRemainingTotal = useCallback((windows: TimeWindow[]) => {
+    let total = 0
+    for (const w of windows) {
+      if (isPast(w)) continue
+      const startMin = parseTime(w.start)
+      const endMin = parseTime(w.end)
+      if (isRunning(w)) {
+        total += endMin - nowMin
+      } else {
+        total += endMin - startMin
+      }
+    }
+    return Math.max(0, total)
+  }, [nowMin])
+
+  const [totalMinutes, setTotalMinutes] = useState(0)
+
   useEffect(() => {
-    setTotalMinutes(calcTotal(timeWindows))
-  }, [timeWindows, calcTotal])
+    setTotalMinutes(calcRemainingTotal(timeWindows))
+  }, [timeWindows, calcRemainingTotal, nowMin])
 
   const addWindow = () => {
     const last = timeWindows[timeWindows.length - 1]
@@ -120,14 +177,6 @@ export default function HomePage() {
       }
     }
 
-    const total = calcTotal(timeWindows)
-    const maxMin = maxHours * 60
-    if (total > maxMin) {
-      const h = Math.floor(total / 60)
-      const m = total % 60
-      return `Gesamtzeit (${h}h ${m}min) überschreitet Maximum von ${maxHours}h`
-    }
-
     return null
   }
 
@@ -167,6 +216,7 @@ export default function HomePage() {
     setSyncing(true)
     setError('')
     setSuccess('')
+    setSyncStatus(null)
 
     try {
       const res = await fetch('/api/fritzbox/sync', {
@@ -181,7 +231,9 @@ export default function HomePage() {
         return
       }
 
-      setSuccess('Zeiten in Fritzbox übertragen!')
+      const action = result.data?.action === 'granted' ? 'Zugriff erlaubt' : 'Zugriff gesperrt'
+      setSyncStatus(action)
+      setSuccess(`Zeiten in Fritzbox übertragen (${action})`)
     } catch {
       setError('Sync fehlgeschlagen')
     } finally {
@@ -220,13 +272,9 @@ export default function HomePage() {
     setShowParentDialog(true)
   }
 
-  const t = (min: number) => {
-    const h = Math.floor(Math.abs(min) / 60)
-    const m = Math.abs(min) % 60
-    return `${h}h ${m}min`
+  if (loading) {
+    return <div className="text-center text-muted-foreground py-8">Lade...</div>
   }
-
-  const maxMin = maxHours * 60
 
   return (
     <div className="space-y-6">
@@ -246,41 +294,59 @@ export default function HomePage() {
         </div>
 
         <div className="space-y-3">
-          {timeWindows.map((window, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <select
-                value={window.start}
-                onChange={(e) => updateWindow(i, 'start', e.target.value)}
-                className="border rounded px-2 py-1.5 text-sm bg-background"
-              >
-                {allTimeOptions.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-              <span className="text-muted-foreground">bis</span>
-              <select
-                value={window.end}
-                onChange={(e) => updateWindow(i, 'end', e.target.value)}
-                className="border rounded px-2 py-1.5 text-sm bg-background"
-              >
-                {getEndOptions(window.start).map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-              {timeWindows.length > 1 && (
-                <button
-                  onClick={() => removeWindow(i)}
-                  className="text-destructive hover:text-destructive/80 text-sm ml-1"
+          {timeWindows.map((window, i) => {
+            const future = isFuture(window)
+            const running = isRunning(window)
+            const past = isPast(window)
+            const locked = !future
+
+            return (
+              <div key={i} className={`flex items-center gap-3 ${locked ? 'opacity-70' : ''}`}>
+                <select
+                  value={window.start}
+                  onChange={(e) => updateWindow(i, 'start', e.target.value)}
+                  disabled={locked}
+                  className={`border rounded px-2 py-1.5 text-sm bg-background ${locked ? 'cursor-not-allowed' : ''}`}
                 >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
+                  {allTimeOptions.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <span className="text-muted-foreground">bis</span>
+                <select
+                  value={window.end}
+                  onChange={(e) => updateWindow(i, 'end', e.target.value)}
+                  disabled={locked}
+                  className={`border rounded px-2 py-1.5 text-sm bg-background ${locked ? 'cursor-not-allowed' : ''}`}
+                >
+                  {getEndOptions(window.start).map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                {running && (
+                  <span className="text-xs text-green-600 font-medium whitespace-nowrap">läuft</span>
+                )}
+                {past && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">abgelaufen</span>
+                )}
+                {future && timeWindows.length > 1 && (
+                  <button
+                    onClick={() => removeWindow(i)}
+                    className="text-destructive hover:text-destructive/80 text-sm ml-1"
+                  >
+                    ✕
+                  </button>
+                )}
+                {locked && timeWindows.length > 1 && (
+                  <span className="text-muted-foreground text-xs ml-1">🔒</span>
+                )}
+              </div>
+            )
+          })}
         </div>
 
         <div className="border-t pt-3 flex items-center justify-between">
-          <span className="text-sm font-medium">Gesamtzeit: {t(totalMinutes)}</span>
+          <span className="text-sm font-medium">Verbleibend: {formatDuration(totalMinutes)}</span>
           <div className="h-2 bg-muted rounded-full flex-1 mx-4 max-w-xs">
             <div
               className={`h-full rounded-full transition-all ${
@@ -290,7 +356,7 @@ export default function HomePage() {
             />
           </div>
           <span className="text-xs text-muted-foreground">
-            {t(Math.max(0, maxMin - totalMinutes))} übrig
+            {formatDuration(Math.max(0, maxMin - totalMinutes))} übrig
           </span>
         </div>
       </div>
@@ -303,6 +369,11 @@ export default function HomePage() {
       ))}
       {success && (
         <div className="bg-green-50 text-green-700 rounded-lg p-3 text-sm">✓ {success}</div>
+      )}
+      {syncStatus && (
+        <div className="bg-blue-50 text-blue-700 rounded-lg p-3 text-sm">
+          Fritzbox: {syncStatus === 'Zugriff erlaubt' ? '✅' : '🔒'} {syncStatus}
+        </div>
       )}
 
       <div className="flex gap-3">
