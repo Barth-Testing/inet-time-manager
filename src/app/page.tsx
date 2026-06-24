@@ -219,10 +219,13 @@ export default function HomePage() {
     setSyncStatus(null)
 
     try {
+      const now = new Date()
+      const hh = String(now.getHours()).padStart(2, '0')
+      const mm = String(now.getMinutes()).padStart(2, '0')
       const res = await fetch('/api/fritzbox/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: today }),
+        body: JSON.stringify({ date: today, currentTime: `${hh}:${mm}` }),
       })
 
       const result = await res.json()

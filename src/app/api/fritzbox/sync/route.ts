@@ -14,6 +14,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Date required' }, { status: 400 });
     }
 
+    const currentTime = body.currentTime;
+
     const settings = getSettings();
     if (!settings.fritzboxPassword) {
       return NextResponse.json({ success: false, error: 'Fritzbox nicht konfiguriert' }, { status: 400 });
@@ -28,8 +30,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Keine Zeitfenster für diesen Tag' }, { status: 404 });
     }
 
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const currentMinutes = currentTime
+      ? (() => { const [h, m] = currentTime.split(':').map(Number); return h * 60 + m })()
+      : (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes() })();
 
     let isWithinWindow = false;
     for (const w of schedule.timeWindows) {
