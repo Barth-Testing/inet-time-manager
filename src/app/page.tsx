@@ -9,6 +9,14 @@ interface TimeWindow {
   end: string
 }
 
+interface DeviceStatus {
+  hostName: string
+  ipAddress: string
+  wanAccess: string
+  timeUsed: number
+  timeMax: number
+}
+
 const MINUTES = ['00', '15', '30', '45']
 
 function getTimeOptions(start: string, end: string) {
@@ -67,6 +75,8 @@ export default function HomePage() {
   const [parentError, setParentError] = useState('')
   const [pendingAction, setPendingAction] = useState<'holiday' | 'override' | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [devices, setDevices] = useState<DeviceStatus[]>([])
+  const [checkingStatus, setCheckingStatus] = useState(false)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [nowMin, setNowMin] = useState(nowMinutes)
 
@@ -217,6 +227,7 @@ export default function HomePage() {
     setError('')
     setSuccess('')
     setSyncStatus(null)
+    setDevices([])
 
     try {
       const now = new Date()
@@ -236,11 +247,27 @@ export default function HomePage() {
 
       const action = result.data?.action === 'granted' ? 'Zugriff erlaubt' : 'Zugriff gesperrt'
       setSyncStatus(action)
+      if (result.data?.devices) setDevices(result.data.devices)
       setSuccess(`Zeiten in Fritzbox übertragen (${action})`)
     } catch {
       setError('Sync fehlgeschlagen')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleCheckStatus = async () => {
+    setCheckingStatus(true)
+    setError('')
+    try {
+      const res = await fetch('/api/fritzbox/status')
+      const result = await res.json()
+      if (!result.success) { setError(result.error); return }
+      if (result.data?.devices) setDevices(result.data.devices)
+    } catch {
+      setError('Status abfragen fehlgeschlagen')
+    } finally {
+      setCheckingStatus(false)
     }
   }
 
@@ -379,6 +406,26 @@ export default function HomePage() {
         </div>
       )}
 
+      {devices.length > 0 && (
+        <div className="bg-card border rounded-lg p-3 space-y-2">
+          <h3 className="text-sm font-semibold">Fritzbox Geräte-Status</h3>
+          {devices.map(d => {
+            const allowed = d.wanAccess === '1'
+            return (
+              <div key={d.ipAddress} className="flex items-center justify-between text-sm">
+                <span className="font-medium">{d.hostName || d.ipAddress}</span>
+                <span className={allowed ? 'text-green-600' : 'text-red-600'}>
+                  {allowed ? '✅ Zugriff erlaubt' : '🔒 Zugriff gesperrt'}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Budget: {Math.round(d.timeUsed / 60)}/{Math.round(d.timeMax / 60)}min
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       <div className="flex gap-3">
         <button
           onClick={handleSave}
@@ -392,6 +439,14 @@ export default function HomePage() {
           className="flex-1 bg-secondary text-secondary-foreground rounded-lg py-2.5 font-medium hover:bg-secondary/80 transition-colors disabled:opacity-50"
         >
           {syncing ? 'Übertrage...' : 'In Fritzbox übertragen'}
+        </button>
+        <button
+          onClick={handleCheckStatus}
+          disabled={checkingStatus}
+          className="border rounded-lg px-3 py-2.5 text-sm hover:bg-accent transition-colors disabled:opacity-50"
+          title="Aktuellen Status von der Fritzbox abrufen"
+        >
+          {checkingStatus ? '...' : '🔄 Status'}
         </button>
       </div>
 

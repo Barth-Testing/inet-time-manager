@@ -49,6 +49,17 @@ export async function POST(request: NextRequest) {
     const client = new FritzboxClient();
     const results = await client.syncDevices(settings.childDeviceIPs, isWithinWindow);
 
+    let deviceStatuses: any[] = [];
+    try {
+      deviceStatuses = (await client.checkDevices(settings.childDeviceIPs)).map(e => ({
+        hostName: e.hostName,
+        ipAddress: e.ipAddress,
+        wanAccess: e.wanAccess,
+        timeUsed: e.timeUsed,
+        timeMax: e.timeMax,
+      }));
+    } catch {}
+
     const allSuccess = results.every(r => r.success);
     const errors = results.filter(r => !r.success).map(r => `${r.ip}: ${r.error}`).join('; ');
 
@@ -71,7 +82,7 @@ export async function POST(request: NextRequest) {
       success: true,
       data: {
         action: isWithinWindow ? 'granted' : 'denied',
-        devices: results,
+        devices: deviceStatuses,
       }
     });
   } catch (error: any) {
