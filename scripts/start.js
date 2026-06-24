@@ -39,7 +39,7 @@ console.log('Datenbank initialisiert');
 
 // Start Next.js
 try {
-  execSync('npx next start', { stdio: 'inherit', cwd: join(__dirname, '..') });
+  execSync('npx next start -H 0.0.0.0', { stdio: 'inherit', cwd: join(__dirname, '..') });
 } catch (error) {
   console.error('Fehler beim Start von Next.js:', error.message);
   process.exit(1);
