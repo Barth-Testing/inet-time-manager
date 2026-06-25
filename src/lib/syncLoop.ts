@@ -9,25 +9,15 @@ export function startSyncLoop() {
   if (running) return;
   running = true;
 
-  function scheduleNext() {
-    const now = new Date();
-    const minutes = now.getMinutes();
-    const seconds = now.getSeconds();
-    const ms = now.getMilliseconds();
+  doSync().catch(() => {});
 
-    const targetMinutes = [14, 29, 44, 59];
-    let nextMin = targetMinutes.find(m => m > minutes) ?? (targetMinutes[0] + 60);
-    const minUntilNext = nextMin - minutes;
-    const msUntilNext = minUntilNext * 60 * 1000 - seconds * 1000 - ms;
-
-    setTimeout(() => {
-      doSync().catch(() => {});
-      scheduleNext();
-    }, Math.max(msUntilNext, 1000));
+  function tick() {
+    doSync().catch(() => {});
+    setTimeout(tick, 60_000);
   }
 
-  doSync().catch(() => {});
-  scheduleNext();
+  const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
+  setTimeout(tick, msToNextMinute);
 }
 
 async function doSync() {
