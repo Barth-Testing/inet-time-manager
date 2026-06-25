@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from 'react'
 
+const SETTINGS_PASSWORD = 'Fritz123'
+
 export default function SettingsPage() {
+  const [unlocked, setUnlocked] = useState(false)
+  const [pwInput, setPwInput] = useState('')
+  const [pwError, setPwError] = useState('')
+
   const [settings, setSettings] = useState({
     fritzboxHost: 'fritz.box',
     fritzboxUsername: '',
@@ -17,7 +23,6 @@ export default function SettingsPage() {
   })
 
   const [newDeviceIP, setNewDeviceIP] = useState('')
-  
   const [currentCode, setCurrentCode] = useState('')
   const [newCode, setNewCode] = useState('')
   const [confirmCode, setConfirmCode] = useState('')
@@ -26,8 +31,15 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState('')
-  
+
   useEffect(() => {
+    if (sessionStorage.getItem('settings_unlocked') === '1') {
+      setUnlocked(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!unlocked) return
     fetch('/api/settings')
       .then(r => r.json())
       .then(result => {
@@ -35,19 +47,28 @@ export default function SettingsPage() {
           setSettings(prev => ({ ...prev, ...result.data }))
         }
       })
-  }, [])
-  
+  }, [unlocked])
+
+  const handlePwSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (pwInput === SETTINGS_PASSWORD) {
+      sessionStorage.setItem('settings_unlocked', '1')
+      setUnlocked(true)
+      setPwError('')
+    } else {
+      setPwError('Falsches Passwort')
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setMessage('')
-    
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       })
-      
       const result = await res.json()
       if (result.success) {
         setMessageType('success')
@@ -63,15 +84,13 @@ export default function SettingsPage() {
       setSaving(false)
     }
   }
-  
+
   const handleTestConnection = async () => {
     setTesting(true)
     setTestResult('')
-    
     try {
       const res = await fetch('/api/fritzbox/test', { method: 'POST' })
       const result = await res.json()
-      
       if (result.success) {
         setTestResult('Verbindung erfolgreich! Profile: ' + (result.data?.availableProfiles?.join(', ') || 'Keine'))
         setMessageType('success')
@@ -88,27 +107,24 @@ export default function SettingsPage() {
       setTesting(false)
     }
   }
-  
+
   const handleChangeCode = async () => {
     if (newCode !== confirmCode) {
       setMessageType('error')
       setMessage('Codes stimmen nicht überein')
       return
     }
-    
     if (newCode.length < 4) {
       setMessageType('error')
       setMessage('Code muss mindestens 4 Zeichen lang sein')
       return
     }
-    
     try {
       const res = await fetch('/api/auth/verify', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentCode, newCode }),
       })
-      
       const result = await res.json()
       if (result.success) {
         setMessageType('success')
@@ -125,25 +141,47 @@ export default function SettingsPage() {
       setMessage('Fehler beim Ändern')
     }
   }
-  
+
+  if (!unlocked) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <form onSubmit={handlePwSubmit} className="bg-card border rounded-xl p-6 max-w-sm w-full space-y-4">
+          <h1 className="text-xl font-bold text-center">Einstellungen</h1>
+          <p className="text-sm text-muted-foreground text-center">Passwort erforderlich</p>
+          <input
+            type="password"
+            value={pwInput}
+            onChange={e => { setPwInput(e.target.value); setPwError('') }}
+            className="w-full border rounded-lg px-3 py-2 text-lg tracking-widest text-center bg-background"
+            placeholder="Passwort"
+            autoFocus
+          />
+          {pwError && <p className="text-destructive text-sm text-center">{pwError}</p>}
+          <button
+            type="submit"
+            className="w-full bg-primary text-primary-foreground rounded-lg py-2.5 font-medium hover:bg-primary/90 transition-colors"
+          >
+            Freischalten
+          </button>
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-bold">Einstellungen</h1>
-      
+
       {message && (
         <div className={`rounded-lg p-3 text-sm ${
-          messageType === 'success'
-            ? 'bg-green-50 text-green-700'
-            : 'bg-red-50 text-red-700'
+          messageType === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
         }`}>
           {message}
         </div>
       )}
-      
-      {/* Fritzbox Configuration */}
+
       <section className="bg-card border rounded-lg p-4 space-y-4">
         <h2 className="font-semibold">Fritzbox Verbindung</h2>
-        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Host</label>
@@ -155,7 +193,6 @@ export default function SettingsPage() {
               placeholder="fritz.box"
             />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Benutzername</label>
             <input
@@ -166,7 +203,6 @@ export default function SettingsPage() {
               placeholder="Fritzbox Benutzername"
             />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Passwort</label>
             <input
@@ -176,7 +212,6 @@ export default function SettingsPage() {
               placeholder="Fritzbox Passwort"
             />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Access-Profil Name</label>
             <input
@@ -188,7 +223,6 @@ export default function SettingsPage() {
             />
           </div>
         </div>
-        
         <div className="flex gap-2">
           <button
             onClick={handleTestConnection}
@@ -198,19 +232,14 @@ export default function SettingsPage() {
             {testing ? 'Teste...' : 'Verbindung testen'}
           </button>
         </div>
-        
-        {testResult && (
-          <div className="text-sm text-green-700">{testResult}</div>
-        )}
+        {testResult && <div className="text-sm text-green-700">{testResult}</div>}
       </section>
-      
-      {/* Child Devices */}
+
       <section className="bg-card border rounded-lg p-4 space-y-4">
         <h2 className="font-semibold">Kind-Geräte</h2>
         <p className="text-sm text-muted-foreground">
           IP-Adressen der Geräte, deren Internetzugriff gesteuert werden soll.
         </p>
-
         <div className="flex gap-2">
           <input
             type="text"
@@ -221,10 +250,7 @@ export default function SettingsPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newDeviceIP.trim()) {
                 if (!settings.childDeviceIPs.includes(newDeviceIP.trim())) {
-                  setSettings({
-                    ...settings,
-                    childDeviceIPs: [...settings.childDeviceIPs, newDeviceIP.trim()],
-                  })
+                  setSettings({ ...settings, childDeviceIPs: [...settings.childDeviceIPs, newDeviceIP.trim()] })
                 }
                 setNewDeviceIP('')
               }
@@ -233,10 +259,7 @@ export default function SettingsPage() {
           <button
             onClick={() => {
               if (newDeviceIP.trim() && !settings.childDeviceIPs.includes(newDeviceIP.trim())) {
-                setSettings({
-                  ...settings,
-                  childDeviceIPs: [...settings.childDeviceIPs, newDeviceIP.trim()],
-                })
+                setSettings({ ...settings, childDeviceIPs: [...settings.childDeviceIPs, newDeviceIP.trim()] })
                 setNewDeviceIP('')
               }
             }}
@@ -245,19 +268,13 @@ export default function SettingsPage() {
             Hinzufügen
           </button>
         </div>
-
         {settings.childDeviceIPs.length > 0 && (
           <div className="space-y-2">
             {settings.childDeviceIPs.map((ip, i) => (
               <div key={i} className="flex items-center justify-between border rounded-lg px-3 py-2 text-sm">
                 <span>{ip}</span>
                 <button
-                  onClick={() => {
-                    setSettings({
-                      ...settings,
-                      childDeviceIPs: settings.childDeviceIPs.filter((_, j) => j !== i),
-                    })
-                  }}
+                  onClick={() => setSettings({ ...settings, childDeviceIPs: settings.childDeviceIPs.filter((_, j) => j !== i) })}
                   className="text-red-500 hover:text-red-700 transition-colors"
                 >
                   Entfernen
@@ -268,125 +285,85 @@ export default function SettingsPage() {
         )}
       </section>
 
-      {/* Time Settings */}
       <section className="bg-card border rounded-lg p-4 space-y-4">
         <h2 className="font-semibold">Zeit-Einstellungen</h2>
-        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Max. Stunden (So-Do)</label>
             <input
-              type="number"
-              step="0.5"
-              min="0"
-              max="24"
+              type="number" step="0.5" min="0" max="24"
               value={settings.maxHoursSunThu}
               onChange={(e) => setSettings({ ...settings, maxHoursSunThu: parseFloat(e.target.value) || 0 })}
               className="w-full border rounded-lg px-3 py-2 text-sm bg-background"
             />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Max. Stunden (Fr-Sa)</label>
             <input
-              type="number"
-              step="0.5"
-              min="0"
-              max="24"
+              type="number" step="0.5" min="0" max="24"
               value={settings.maxHoursFriSat}
               onChange={(e) => setSettings({ ...settings, maxHoursFriSat: parseFloat(e.target.value) || 0 })}
               className="w-full border rounded-lg px-3 py-2 text-sm bg-background"
             />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Erlaubte Zeit (So-Do)</label>
             <div className="flex items-center gap-2">
-              <input
-                type="time"
-                value={settings.allowedStartSunThu}
+              <input type="time" value={settings.allowedStartSunThu}
                 onChange={(e) => setSettings({ ...settings, allowedStartSunThu: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm bg-background"
-              />
+                className="border rounded-lg px-3 py-2 text-sm bg-background" />
               <span>bis</span>
-              <input
-                type="time"
-                value={settings.allowedEndSunThu}
+              <input type="time" value={settings.allowedEndSunThu}
                 onChange={(e) => setSettings({ ...settings, allowedEndSunThu: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm bg-background"
-              />
+                className="border rounded-lg px-3 py-2 text-sm bg-background" />
             </div>
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Erlaubte Zeit (Fr-Sa)</label>
             <div className="flex items-center gap-2">
-              <input
-                type="time"
-                value={settings.allowedStartFriSat}
+              <input type="time" value={settings.allowedStartFriSat}
                 onChange={(e) => setSettings({ ...settings, allowedStartFriSat: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm bg-background"
-              />
+                className="border rounded-lg px-3 py-2 text-sm bg-background" />
               <span>bis</span>
-              <input
-                type="time"
-                value={settings.allowedEndFriSat}
+              <input type="time" value={settings.allowedEndFriSat}
                 onChange={(e) => setSettings({ ...settings, allowedEndFriSat: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm bg-background"
-              />
+                className="border rounded-lg px-3 py-2 text-sm bg-background" />
             </div>
           </div>
         </div>
       </section>
-      
-      {/* Parent Code */}
+
       <section className="bg-card border rounded-lg p-4 space-y-4">
         <h2 className="font-semibold">Eltern-Code</h2>
         <p className="text-sm text-muted-foreground">
           Mit diesem Code können Ausnahmen (z.B. Ferienmodus) freigegeben werden.
         </p>
-        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Aktueller Code</label>
-            <input
-              type="password"
-              value={currentCode}
+            <input type="password" value={currentCode}
               onChange={(e) => setCurrentCode(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background"
-            />
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Neuer Code</label>
-            <input
-              type="password"
-              value={newCode}
+            <input type="password" value={newCode}
               onChange={(e) => setNewCode(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background"
-            />
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
           </div>
-          
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Neuer Code bestätigen</label>
-            <input
-              type="password"
-              value={confirmCode}
+            <input type="password" value={confirmCode}
               onChange={(e) => setConfirmCode(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background"
-            />
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
           </div>
         </div>
-        
-        <button
-          onClick={handleChangeCode}
-          className="border rounded-lg px-4 py-2 text-sm hover:bg-accent transition-colors"
-        >
+        <button onClick={handleChangeCode}
+          className="border rounded-lg px-4 py-2 text-sm hover:bg-accent transition-colors">
           Code ändern
         </button>
       </section>
-      
-      {/* Save Button */}
+
       <button
         onClick={handleSave}
         disabled={saving}
