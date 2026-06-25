@@ -418,7 +418,7 @@ export default function HomePage() {
                   {allowed ? '✅ Zugriff erlaubt' : '🔒 Zugriff gesperrt'}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Budget: {Math.round(d.timeUsed / 60)}/{Math.round(d.timeMax / 60)}min
+                  Budget: {Math.round(d.timeUsed / 60)}/{Math.round(d.timeMax / 60)}min · wanAccess={d.wanAccess}
                 </span>
               </div>
             )
