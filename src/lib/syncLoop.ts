@@ -15,10 +15,10 @@ export function startSyncLoop() {
     const seconds = now.getSeconds();
     const ms = now.getMilliseconds();
 
-    let minUntilNext14 = (14 - minutes + 60) % 60;
-    if (minUntilNext14 === 0) minUntilNext14 = 60;
-
-    const msUntilNext = minUntilNext14 * 60 * 1000 - seconds * 1000 - ms;
+    const targetMinutes = [14, 29, 44, 59];
+    let nextMin = targetMinutes.find(m => m > minutes) ?? (targetMinutes[0] + 60);
+    const minUntilNext = nextMin - minutes;
+    const msUntilNext = minUntilNext * 60 * 1000 - seconds * 1000 - ms;
 
     setTimeout(() => {
       doSync().catch(() => {});
