@@ -26,6 +26,7 @@ export function startSyncLoop() {
     }, Math.max(msUntilNext, 1000));
   }
 
+  doSync().catch(() => {});
   scheduleNext();
 }
 
