@@ -147,25 +147,6 @@ export class FritzboxClient {
     });
   }
 
-  async syncDevices(
-    deviceIPs: string[],
-    shouldHaveAccess: boolean
-  ): Promise<{ ip: string; success: boolean; verified: boolean; error?: string }[]> {
-    const results: { ip: string; success: boolean; verified: boolean; error?: string }[] = [];
-    for (const ip of deviceIPs) {
-      try {
-        await this.setWANAccess(ip, shouldHaveAccess);
-        const entry = await this.getHostEntry(ip);
-        const expectedDisallow = shouldHaveAccess ? '0' : '1';
-        const verified = entry?.disallow === expectedDisallow;
-        results.push({ ip, success: true, verified });
-      } catch (e: any) {
-        results.push({ ip, success: false, verified: false, error: e.message || 'Unbekannter Fehler beim Sync' });
-      }
-    }
-    return results;
-  }
-
   async setHostEntryFilterProfile(ip: string, profileId: string): Promise<void> {
     const svc = await getFritzboxService();
     await svc.actions.AddHostEntryToFilterProfile({
@@ -195,6 +176,7 @@ export class FritzboxClient {
     if (shouldHaveAccess) {
       const settings = getSettings();
       allowProfileId = await this.findAllowProfileId(settings.accessProfileName).catch(() => null);
+      console.log(`[Fritzbox] allowProfileId: ${allowProfileId}, blockProfileName: ${settings.accessProfileName}`);
     }
 
     for (const ip of deviceIPs) {
@@ -202,12 +184,22 @@ export class FritzboxClient {
         await this.setWANAccess(ip, shouldHaveAccess);
 
         if (allowProfileId) {
-          await this.setHostEntryFilterProfile(ip, allowProfileId).catch(() => {});
+          try {
+            await this.setHostEntryFilterProfile(ip, allowProfileId);
+            console.log(`[Fritzbox] Profile switch ${ip} -> ${allowProfileId} OK`);
+          } catch (e: any) {
+            console.log(`[Fritzbox] Profile switch ${ip} -> ${allowProfileId} FAILED: ${e.message}`);
+          }
         } else if (!shouldHaveAccess) {
           const settings = getSettings();
           const blockProfile = (await this.getProfiles()).find(p => p.name === settings.accessProfileName);
           if (blockProfile) {
-            await this.setHostEntryFilterProfile(ip, blockProfile.id).catch(() => {});
+            try {
+              await this.setHostEntryFilterProfile(ip, blockProfile.id);
+              console.log(`[Fritzbox] Profile switch ${ip} -> ${blockProfile.id} OK`);
+            } catch (e: any) {
+              console.log(`[Fritzbox] Profile switch ${ip} -> ${blockProfile.id} FAILED: ${e.message}`);
+            }
           }
         }
 
