@@ -166,6 +166,21 @@ export class FritzboxClient {
     }
   }
 
+  async keepAlive(deviceIPs: string[]): Promise<void> {
+    try {
+      const svc = await getFritzboxService();
+      for (const ip of deviceIPs) {
+        try {
+          await svc.actions.DisallowWANAccessByIP({ NewIPv4Address: ip, NewDisallow: 0 });
+        } catch (e: any) {
+          console.log(`[KeepAlive] ${ip} failed: ${e.message}`);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[KeepAlive] service error: ${e.message}`);
+    }
+  }
+
   async syncDevices(
     deviceIPs: string[],
     shouldHaveAccess: boolean

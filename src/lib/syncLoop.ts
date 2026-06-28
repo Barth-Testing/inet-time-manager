@@ -6,6 +6,7 @@ import { addSyncLog } from './db';
 
 let started = false;
 let boundaryTimer: ReturnType<typeof setTimeout> | null = null;
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -54,6 +55,7 @@ function msUntil(targetMin: number): number {
 
 function clearTimers() {
   if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
 }
 
 async function syncDevices(shouldHaveAccess: boolean) {
@@ -113,8 +115,16 @@ async function onTransition() {
   const schedule = getSchedule(today);
   if (!schedule?.timeWindows?.length) { scheduleBoundary(); return; }
 
+  const settings = getSettings();
   const inside = isInsideWindow(schedule.timeWindows, nowMin);
   await syncDevices(inside);
+
+  if (inside && settings.childDeviceIPs.length) {
+    const client = new FritzboxClient();
+    keepAliveTimer = setInterval(async () => {
+      await client.keepAlive(settings.childDeviceIPs);
+    }, 40_000);
+  }
 
   scheduleBoundary();
 }
