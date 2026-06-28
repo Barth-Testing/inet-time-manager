@@ -6,6 +6,7 @@ import { addSyncLog } from './db';
 
 let started = false;
 let boundaryTimer: ReturnType<typeof setTimeout> | null = null;
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -54,6 +55,7 @@ function msUntil(targetMin: number): number {
 
 function clearTimers() {
   if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
 }
 
 async function syncDevices(shouldHaveAccess: boolean) {
@@ -108,6 +110,22 @@ function scheduleMidnight() {
   boundaryTimer = setTimeout(scheduleBoundary, Math.max(ms, 1_000));
 }
 
+async function startKeepAlive() {
+  const settings = getSettings();
+  if (!settings.childDeviceIPs.length) return;
+  console.log(`[KeepAlive] Starting (${settings.childDeviceIPs.length} devices, interval=40s)`);
+  const client = new FritzboxClient();
+  keepAliveTimer = setInterval(async () => {
+    for (const ip of settings.childDeviceIPs) {
+      try {
+        await client.setWANAccess(ip, true);
+      } catch (e: any) {
+        console.error(`[KeepAlive] ${ip} failed:`, e?.message || String(e).substring(0, 100));
+      }
+    }
+  }, 40_000);
+}
+
 async function onTransition() {
   clearTimers();
 
@@ -121,6 +139,7 @@ async function onTransition() {
   console.log(`[Timer] onTransition at ${format(now, 'HH:mm:ss')}, inside=${inside}`);
   await syncDevices(inside);
 
+  if (inside) await startKeepAlive();
   scheduleBoundary();
 }
 
