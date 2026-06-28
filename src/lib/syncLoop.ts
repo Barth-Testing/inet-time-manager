@@ -132,7 +132,7 @@ async function heartbeat() {
     console.error('[SyncLoop] Heartbeat fehlgeschlagen:', e.message);
   }
 
-  heartbeatTimer = setTimeout(heartbeat, 60_000);
+  heartbeatTimer = setTimeout(heartbeat, 15_000);
 }
 
 async function onTransition() {
@@ -148,7 +148,7 @@ async function onTransition() {
   await syncDevices(inside);
 
   if (inside) {
-    heartbeatTimer = setTimeout(heartbeat, 60_000);
+    heartbeatTimer = setTimeout(heartbeat, 15_000);
   }
 
   scheduleBoundary();
@@ -167,7 +167,7 @@ export function startSyncLoop() {
     const inside = isInsideWindow(schedule.timeWindows, nowMin);
     syncDevices(inside).then(() => {
       if (inside) {
-        heartbeatTimer = setTimeout(heartbeat, 60_000);
+        heartbeatTimer = setTimeout(heartbeat, 15_000);
       }
       scheduleBoundary();
     });
