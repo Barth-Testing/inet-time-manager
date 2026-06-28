@@ -1,10 +1,11 @@
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { getSettings } from './settings';
 import { getSchedule } from './schedule';
 import { FritzboxClient } from './fritzbox';
 import { addSyncLog } from './db';
 
-let running = false;
+let started = false;
+let timer: ReturnType<typeof setTimeout> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -15,53 +16,142 @@ export function getSyncStatus() {
   return { status: lastSyncResult, lastSync: lastSyncTime, detail: lastSyncDetail };
 }
 
-export function startSyncLoop() {
-  if (running) return;
-  running = true;
+function timeToMin(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
 
-  console.log('[SyncLoop] Started, running initial sync...');
-  doSync().catch(() => {});
+function isInsideWindow(windows: { start: string; end: string }[], nowMin: number): boolean {
+  for (const w of windows) {
+    if (nowMin >= timeToMin(w.start) && nowMin < timeToMin(w.end)) return true;
+  }
+  return false;
+}
 
-  function tick() {
-    doSync().catch(() => {});
-    setTimeout(tick, 60_000);
+function nextTransitionMin(windows: { start: string; end: string }[], nowMin: number): number | null {
+  const sorted = [...windows].sort((a, b) => a.start.localeCompare(b.start));
+
+  for (const w of sorted) {
+    const s = timeToMin(w.start);
+    const e = timeToMin(w.end);
+    if (nowMin >= s && nowMin < e) return e;
   }
 
-  const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
-  setTimeout(tick, msToNextMinute);
+  for (const w of sorted) {
+    const s = timeToMin(w.start);
+    if (nowMin < s) return s;
+  }
+
+  return null;
 }
 
-export async function triggerSync(): Promise<SyncStatus> {
-  return doSync();
+function msUntil(targetMin: number): number {
+  const now = new Date();
+  const diffMin = targetMin - (now.getHours() * 60 + now.getMinutes());
+  if (diffMin <= 0) return 0;
+  return diffMin * 60_000 - now.getSeconds() * 1000 - now.getMilliseconds();
 }
 
-async function doSync(): Promise<SyncStatus> {
-  lastSyncResult = 'syncing';
+function scheduleNext() {
+  if (timer) { clearTimeout(timer); timer = null; }
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+
+  const windows = schedule?.timeWindows;
+  if (!windows?.length) {
+    scheduleMidnight();
+    return;
+  }
+
+  const nextMin = nextTransitionMin(windows, nowMin);
+
+  if (nextMin === null) {
+    scheduleMidnight();
+    return;
+  }
+
+  const delay = msUntil(nextMin);
+  timer = setTimeout(onTransition, Math.max(delay, 500));
+}
+
+function scheduleMidnight() {
+  const tomorrow = addDays(new Date(), 1);
+  const ms = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()).getTime() - Date.now();
+  timer = setTimeout(scheduleNext, Math.max(ms, 1_000));
+}
+
+async function syncAndSchedule(shouldHaveAccess: boolean) {
   const settings = getSettings();
   if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) {
-    lastSyncResult = 'idle';
-    return 'idle';
-  }
-
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const schedule = getSchedule(today);
-  if (!schedule?.timeWindows?.length) {
-    lastSyncResult = 'idle';
-    return 'idle';
+    scheduleNext();
+    return;
   }
 
   const now = new Date();
-  const currentMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
 
-  let shouldHaveAccess = false;
-  for (const w of schedule.timeWindows) {
-    const [sh, sm] = w.start.split(':').map(Number);
-    const [eh, em] = w.end.split(':').map(Number);
-    if (currentMin >= sh * 60 + sm && currentMin < eh * 60 + em) {
-      shouldHaveAccess = true;
-      break;
-    }
+  try {
+    const client = new FritzboxClient();
+    await client.syncDevices(settings.childDeviceIPs, shouldHaveAccess);
+
+    lastSyncResult = 'success';
+    lastSyncTime = format(now, 'HH:mm:ss');
+    lastSyncDetail = shouldHaveAccess ? 'Geräte freigegeben' : 'Geräte gesperrt';
+    addSyncLog({ scheduleDate: today, success: 1, errorMessage: null, createdAt: now.toISOString() });
+    console.log(`[SyncLoop] ${lastSyncDetail} um ${lastSyncTime}`);
+  } catch (e: any) {
+    lastSyncResult = 'error';
+    lastSyncDetail = `Sync fehlgeschlagen: ${e.message}`;
+    console.error('[SyncLoop]', e.message);
+    addSyncLog({ scheduleDate: today, success: 0, errorMessage: e.message, createdAt: now.toISOString() });
   }
+
+  scheduleNext();
+}
+
+async function onTransition() {
+  timer = null;
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+  if (!schedule?.timeWindows?.length) { scheduleNext(); return; }
+
+  const inside = isInsideWindow(schedule.timeWindows, nowMin);
+  await syncAndSchedule(inside);
+}
+
+export function startSyncLoop() {
+  if (started) return;
+  started = true;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+
+  if (schedule?.timeWindows?.length) {
+    const inside = isInsideWindow(schedule.timeWindows, nowMin);
+    syncAndSchedule(inside);
+  } else {
+    scheduleNext();
+  }
+}
+
+export async function triggerSync(): Promise<SyncStatus> {
+  const settings = getSettings();
+  if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) return 'idle';
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+  if (!schedule?.timeWindows?.length) return 'idle';
+
+  const shouldHaveAccess = isInsideWindow(schedule.timeWindows, nowMin);
 
   try {
     const client = new FritzboxClient();
@@ -75,27 +165,24 @@ async function doSync(): Promise<SyncStatus> {
     if (!allOk) {
       lastSyncResult = 'error';
       lastSyncDetail = `Fehler: ${errors}`;
-      console.error('[SyncLoop] Sync errors:', errors);
-      addSyncLog({ scheduleDate: today, success: 0, errorMessage: errors, createdAt: new Date().toISOString() });
+      addSyncLog({ scheduleDate: today, success: 0, errorMessage: errors, createdAt: now.toISOString() });
       return 'error';
-    }
-
-    if (!allVerified) {
-      lastSyncDetail = `Nicht verifiziert: ${notVerified.join(', ')} (Status evtl. nicht aktualisiert)`;
-      console.warn('[SyncLoop] Some devices not verified:', notVerified.join(', '));
-    } else {
-      lastSyncDetail = `Geräte ${shouldHaveAccess ? 'freigegeben' : 'gesperrt'} (${results.length} Geräte)`;
     }
 
     lastSyncResult = 'success';
     lastSyncTime = format(now, 'HH:mm:ss');
-    addSyncLog({ scheduleDate: today, success: 1, errorMessage: null, createdAt: new Date().toISOString() });
+    lastSyncDetail = shouldHaveAccess ? 'Geräte freigegeben' : 'Geräte gesperrt';
+    addSyncLog({ scheduleDate: today, success: 1, errorMessage: null, createdAt: now.toISOString() });
+
+    if (!allVerified) {
+      lastSyncDetail += ` (nicht verifiziert: ${notVerified.join(', ')})`;
+    }
+
     return 'success';
   } catch (e: any) {
     lastSyncResult = 'error';
     lastSyncDetail = e.message;
-    console.error('[SyncLoop] Sync failed:', e.message);
-    addSyncLog({ scheduleDate: today, success: 0, errorMessage: e.message, createdAt: new Date().toISOString() });
+    addSyncLog({ scheduleDate: today, success: 0, errorMessage: e.message, createdAt: now.toISOString() });
     return 'error';
   }
 }

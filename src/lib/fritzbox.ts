@@ -5,7 +5,15 @@ let fbService: any = null;
 let lastDeviceInit = 0;
 const DEVICE_REFRESH_MS = 300_000;
 
+let syncLoopStarted = false;
+
 async function getFritzboxService() {
+  if (!syncLoopStarted && typeof window === 'undefined') {
+    syncLoopStarted = true;
+    const { startSyncLoop } = require('./syncLoop');
+    startSyncLoop();
+  }
+
   const settings = getSettings();
   if (!settings.fritzboxPassword) throw new Error('Fritzbox nicht konfiguriert');
 
