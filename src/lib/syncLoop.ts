@@ -162,6 +162,11 @@ export function startSyncLoop() {
   }
 }
 
+export function resetTimer() {
+  clearTimers();
+  scheduleBoundary();
+}
+
 export async function triggerSync(): Promise<SyncStatus> {
   const settings = getSettings();
   if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) return 'idle';

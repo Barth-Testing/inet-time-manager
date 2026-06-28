@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSchedule, getSchedulesForWeek, saveSchedule, deleteSchedule } from '@/lib/schedule';
 import { getSettings, verifyParentCode } from '@/lib/settings';
 import { validateDailySchedule } from '@/lib/validation';
+import { resetTimer } from '@/lib/syncLoop';
 import { z } from 'zod';
 
 const timeWindowSchema = z.object({
@@ -75,6 +76,7 @@ export async function POST(request: NextRequest) {
     }
     
     saveSchedule(schedule);
+    resetTimer();
     
     return NextResponse.json({
       success: true,
