@@ -158,26 +158,16 @@ export class FritzboxClient {
   async findAllowProfileId(blockProfileName: string): Promise<string | null> {
     try {
       const profiles = await this.getProfiles();
-      const blockProfile = profiles.find(p => p.name === blockProfileName);
-      const nonBlock = profiles.find(p => p.name !== blockProfileName && p.name === '');
-      return nonBlock?.id || null;
+      console.log(`[Fritzbox] Profiles: ${profiles.map(p => `${p.id}(${p.name || '""'})`).join(', ')}`);
+      const withName = profiles.find(p => p.name !== blockProfileName && p.name !== '');
+      if (withName) {
+        console.log(`[Fritzbox] Using named profile: ${withName.id} (${withName.name})`);
+        return withName.id;
+      }
+      const emptyName = profiles.find(p => p.name !== blockProfileName && p.name === '');
+      return emptyName?.id || null;
     } catch {
       return null;
-    }
-  }
-
-  async keepAlive(deviceIPs: string[]): Promise<void> {
-    try {
-      const svc = await getFritzboxService();
-      for (const ip of deviceIPs) {
-        try {
-          await svc.actions.DisallowWANAccessByIP({ NewIPv4Address: ip, NewDisallow: 0 });
-        } catch (e: any) {
-          console.log(`[KeepAlive] ${ip} failed: ${e.message}`);
-        }
-      }
-    } catch (e: any) {
-      console.error(`[KeepAlive] service error: ${e.message}`);
     }
   }
 

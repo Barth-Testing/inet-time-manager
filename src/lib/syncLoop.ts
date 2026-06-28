@@ -6,7 +6,6 @@ import { addSyncLog } from './db';
 
 let started = false;
 let boundaryTimer: ReturnType<typeof setTimeout> | null = null;
-let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -55,7 +54,6 @@ function msUntil(targetMin: number): number {
 
 function clearTimers() {
   if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
-  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
 }
 
 async function syncDevices(shouldHaveAccess: boolean) {
@@ -91,18 +89,22 @@ function scheduleBoundary() {
   const schedule = getSchedule(today);
 
   const windows = schedule?.timeWindows;
-  if (!windows?.length) { scheduleMidnight(); return; }
+  if (!windows?.length) { console.log('[Timer] no windows, midnight'); scheduleMidnight(); return; }
 
   const nextMin = nextTransitionMin(windows, nowMin);
-  if (nextMin === null) { scheduleMidnight(); return; }
+  if (nextMin === null) { console.log('[Timer] no next transition, midnight'); scheduleMidnight(); return; }
 
   const delay = msUntil(nextMin);
+  const hh = String(Math.floor(nextMin / 60)).padStart(2, '0');
+  const mm = String(nextMin % 60).padStart(2, '0');
+  console.log(`[Timer] next transition at ${hh}:${mm} (in ${Math.round(delay/1000)}s)`);
   boundaryTimer = setTimeout(onTransition, Math.max(delay, 500));
 }
 
 function scheduleMidnight() {
   const tomorrow = addDays(new Date(), 1);
   const ms = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()).getTime() - Date.now();
+  console.log(`[Timer] scheduleMidnight, next in ${Math.round(ms/60000)}min`);
   boundaryTimer = setTimeout(scheduleBoundary, Math.max(ms, 1_000));
 }
 
@@ -115,16 +117,9 @@ async function onTransition() {
   const schedule = getSchedule(today);
   if (!schedule?.timeWindows?.length) { scheduleBoundary(); return; }
 
-  const settings = getSettings();
   const inside = isInsideWindow(schedule.timeWindows, nowMin);
+  console.log(`[Timer] onTransition at ${format(now, 'HH:mm:ss')}, inside=${inside}`);
   await syncDevices(inside);
-
-  if (inside && settings.childDeviceIPs.length) {
-    const client = new FritzboxClient();
-    keepAliveTimer = setInterval(async () => {
-      await client.keepAlive(settings.childDeviceIPs);
-    }, 40_000);
-  }
 
   scheduleBoundary();
 }
