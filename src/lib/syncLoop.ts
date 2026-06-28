@@ -5,7 +5,8 @@ import { FritzboxClient } from './fritzbox';
 import { addSyncLog } from './db';
 
 let started = false;
-let timer: ReturnType<typeof setTimeout> | null = null;
+let boundaryTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -52,8 +53,13 @@ function msUntil(targetMin: number): number {
   return diffMin * 60_000 - now.getSeconds() * 1000 - now.getMilliseconds();
 }
 
-function scheduleNext() {
-  if (timer) { clearTimeout(timer); timer = null; }
+function clearTimers() {
+  if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
+  if (heartbeatTimer) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
+}
+
+function scheduleBoundary() {
+  if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
 
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -61,34 +67,24 @@ function scheduleNext() {
   const schedule = getSchedule(today);
 
   const windows = schedule?.timeWindows;
-  if (!windows?.length) {
-    scheduleMidnight();
-    return;
-  }
+  if (!windows?.length) { scheduleMidnight(); return; }
 
   const nextMin = nextTransitionMin(windows, nowMin);
-
-  if (nextMin === null) {
-    scheduleMidnight();
-    return;
-  }
+  if (nextMin === null) { scheduleMidnight(); return; }
 
   const delay = msUntil(nextMin);
-  timer = setTimeout(onTransition, Math.max(delay, 500));
+  boundaryTimer = setTimeout(onTransition, Math.max(delay, 500));
 }
 
 function scheduleMidnight() {
   const tomorrow = addDays(new Date(), 1);
   const ms = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()).getTime() - Date.now();
-  timer = setTimeout(scheduleNext, Math.max(ms, 1_000));
+  boundaryTimer = setTimeout(scheduleBoundary, Math.max(ms, 1_000));
 }
 
-async function syncAndSchedule(shouldHaveAccess: boolean) {
+async function syncDevices(shouldHaveAccess: boolean) {
   const settings = getSettings();
-  if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) {
-    scheduleNext();
-    return;
-  }
+  if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) return;
 
   const now = new Date();
   const today = format(now, 'yyyy-MM-dd');
@@ -108,26 +104,60 @@ async function syncAndSchedule(shouldHaveAccess: boolean) {
     console.error('[SyncLoop]', e.message);
     addSyncLog({ scheduleDate: today, success: 0, errorMessage: e.message, createdAt: now.toISOString() });
   }
-
-  scheduleNext();
 }
 
-async function onTransition() {
-  timer = null;
+async function heartbeat() {
+  heartbeatTimer = null;
 
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const today = format(now, 'yyyy-MM-dd');
   const schedule = getSchedule(today);
-  if (!schedule?.timeWindows?.length) { scheduleNext(); return; }
+  if (!schedule?.timeWindows?.length) return;
+  if (!isInsideWindow(schedule.timeWindows, nowMin)) return;
+
+  const settings = getSettings();
+  if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) return;
+
+  try {
+    const client = new FritzboxClient();
+    const entries = await client.checkDevices(settings.childDeviceIPs);
+    const needsCorrection = entries.some(e => e.disallow !== '0');
+
+    if (needsCorrection) {
+      await client.syncDevices(settings.childDeviceIPs, true);
+      console.log('[SyncLoop] Heartbeat: Geräte korrigiert (FritzBox hatte Zugriff zurückgesetzt)');
+    }
+  } catch (e: any) {
+    console.error('[SyncLoop] Heartbeat fehlgeschlagen:', e.message);
+  }
+
+  heartbeatTimer = setTimeout(heartbeat, 60_000);
+}
+
+async function onTransition() {
+  clearTimers();
+
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+  if (!schedule?.timeWindows?.length) { scheduleBoundary(); return; }
 
   const inside = isInsideWindow(schedule.timeWindows, nowMin);
-  await syncAndSchedule(inside);
+  await syncDevices(inside);
+
+  if (inside) {
+    heartbeatTimer = setTimeout(heartbeat, 60_000);
+  }
+
+  scheduleBoundary();
 }
 
 export function startSyncLoop() {
   if (started) return;
   started = true;
+
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const today = format(now, 'yyyy-MM-dd');
@@ -135,9 +165,14 @@ export function startSyncLoop() {
 
   if (schedule?.timeWindows?.length) {
     const inside = isInsideWindow(schedule.timeWindows, nowMin);
-    syncAndSchedule(inside);
+    syncDevices(inside).then(() => {
+      if (inside) {
+        heartbeatTimer = setTimeout(heartbeat, 60_000);
+      }
+      scheduleBoundary();
+    });
   } else {
-    scheduleNext();
+    scheduleBoundary();
   }
 }
 
