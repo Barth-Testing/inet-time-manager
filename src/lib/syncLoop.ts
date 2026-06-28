@@ -155,6 +155,9 @@ export function startSyncLoop() {
   if (schedule?.timeWindows?.length) {
     const inside = isInsideWindow(schedule.timeWindows, nowMin);
     syncDevices(inside).then(() => {
+      if (inside) {
+        startKeepAlive();
+      }
       scheduleBoundary();
     });
   } else {
@@ -164,6 +167,13 @@ export function startSyncLoop() {
 
 export function resetTimer() {
   clearTimers();
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const today = format(now, 'yyyy-MM-dd');
+  const schedule = getSchedule(today);
+  if (schedule?.timeWindows?.length && isInsideWindow(schedule.timeWindows, nowMin)) {
+    startKeepAlive();
+  }
   scheduleBoundary();
 }
 
