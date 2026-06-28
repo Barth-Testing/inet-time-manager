@@ -55,12 +55,14 @@ export async function POST(request: NextRequest) {
         hostName: e.hostName,
         ipAddress: e.ipAddress,
         wanAccess: e.wanAccess,
+        disallow: e.disallow,
         timeUsed: e.timeUsed,
         timeMax: e.timeMax,
       }));
     } catch {}
 
     const allSuccess = results.every(r => r.success);
+    const allVerified = results.every(r => r.verified);
     const errors = results.filter(r => !r.success).map(r => `${r.ip}: ${r.error}`).join('; ');
 
     addSyncLog({
@@ -74,7 +76,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: false,
         error: `Sync fehlgeschlagen für: ${errors}`,
-        results
+        results,
       }, { status: 500 });
     }
 
@@ -83,7 +85,8 @@ export async function POST(request: NextRequest) {
       data: {
         action: isWithinWindow ? 'granted' : 'denied',
         devices: deviceStatuses,
-      }
+        verified: allVerified,
+      },
     });
   } catch (error: any) {
     addSyncLog({

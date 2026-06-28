@@ -19,6 +19,7 @@ export async function GET() {
       hostName: e.hostName,
       ipAddress: e.ipAddress,
       wanAccess: e.wanAccess,
+      disallow: e.disallow,
       filterProfileID: e.filterProfileID,
       timeUsed: e.timeUsed,
       timeMax: e.timeMax,

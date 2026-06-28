@@ -1,96 +1,56 @@
 import { getSettings } from './settings';
 
-function createDependencies() {
-  const req = require('request');
-  const { parseStringPromise } = require('xml2js');
-  const xmlbuilder = require('xmlbuilder');
-  return { request: req, parseStringPromise, xmlbuilder };
-}
+let fbInstance: any = null;
+let fbService: any = null;
+let lastDeviceInit = 0;
+const DEVICE_REFRESH_MS = 300_000;
 
-function buildSoapMessage(action: string, serviceType: string, vars: Record<string, string>): string {
-  const { xmlbuilder } = createDependencies();
-  const fqaction = 'u:' + action;
-  const root: any = {
-    's:Envelope': {
-      '@s:encodingStyle': 'http://schemas.xmlsoap.org/soap/encoding/',
-      '@xmlns:s': 'http://schemas.xmlsoap.org/soap/envelope/',
-      's:Body': {}
+async function getFritzboxService() {
+  const settings = getSettings();
+  if (!settings.fritzboxPassword) throw new Error('Fritzbox nicht konfiguriert');
+
+  const { Fritzbox } = require('fritzbox');
+
+  const needsInit = !fbInstance || !fbService || Date.now() - lastDeviceInit > DEVICE_REFRESH_MS;
+
+  if (needsInit) {
+    try {
+      fbInstance = new Fritzbox({
+        host: settings.fritzboxHost || 'fritz.box',
+        port: 49000,
+        ssl: false,
+        user: settings.fritzboxUsername || '',
+        password: settings.fritzboxPassword,
+      });
+      await fbInstance.initTR064Device();
+      fbService = fbInstance.services['urn:dslforum-org:service:X_AVM-DE_HostFilter:1'];
+      lastDeviceInit = Date.now();
+    } catch (e: any) {
+      // Reset cache on failure so next call retries
+      fbInstance = null;
+      fbService = null;
+      throw new Error(`Fritzbox-Init fehlgeschlagen: ${e?.message || 'Unbekannter Fehler'} (${e?.code || e?.name || '?'})`);
     }
-  };
-  root['s:Envelope']['s:Body'][fqaction] = { '@xmlns:u': serviceType };
-  Object.assign(root['s:Envelope']['s:Body'][fqaction], vars);
-  return xmlbuilder.create(root).end();
+  }
+
+  if (!fbService) throw new Error('HostFilter-Service nicht gefunden');
+  return fbService;
 }
 
 export interface HostEntry {
   hostName: string;
   ipAddress: string;
   filterProfileID: string;
+  wanAccess: string;
+  disallow: string;
   timeUsed: number;
   timeMax: number;
-  ticketsInAdvance: number;
-  ticketValid: number;
-  wanAccess: string;
 }
 
 export interface FilterProfile {
   id: string;
   name: string;
   timeBudgetSeconds: number;
-}
-
-const HOSTFILTER_SERVICE = 'urn:dslforum-org:service:X_AVM-DE_HostFilter:1';
-const HOSTFILTER_CONTROL = '/upnp/control/x_hostfilter';
-
-function cleanArgs(obj: Record<string, any>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined && v !== null) out[k] = String(v);
-  }
-  return out;
-}
-
-async function soapCall(
-  host: string, port: number, user: string, password: string,
-  action: string, vars: Record<string, any> = {}
-): Promise<any> {
-  const { request, parseStringPromise } = createDependencies();
-  const body = buildSoapMessage(action, HOSTFILTER_SERVICE, cleanArgs(vars));
-
-  return new Promise((resolve, reject) => {
-    const uri = `http://${host}:${port}${HOSTFILTER_CONTROL}`;
-    request({
-      method: 'POST',
-      uri,
-      auth: { user, pass: password, sendImmediately: false },
-      rejectUnauthorized: false,
-      headers: {
-        'SoapAction': `${HOSTFILTER_SERVICE}#${action}`,
-        'Content-Type': 'text/xml; charset="utf-8"',
-      },
-      body,
-      timeout: 15000,
-    }, async (error: any, response: any, body: string) => {
-      if (error) { reject(new Error(`HTTP request failed: ${error.message}`)); return; }
-      if (response.statusCode !== 200) {
-        try {
-          const parsed = await parseStringPromise(body, { explicitArray: false });
-          const fault = parsed?.['s:Envelope']?.['s:Body']?.['s:Fault'];
-          const code = fault?.detail?.UPnPError?.errorCode || '';
-          const desc = fault?.detail?.UPnPError?.errorDescription || response.statusMessage;
-          reject(new Error(`SOAP error ${code}: ${desc}`));
-        } catch { reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`)); }
-        return;
-      }
-      try {
-        const result = await parseStringPromise(body, { explicitArray: false });
-        const env = result?.['s:Envelope'];
-        const bodyObj = env?.['s:Body'];
-        const responseKey = `u:${action}Response`;
-        resolve(bodyObj?.[responseKey] || {});
-      } catch (e: any) { reject(new Error(`XML parse error: ${e.message}`)); }
-    });
-  });
 }
 
 function num(val: any): number {
@@ -134,82 +94,65 @@ function parseProfileListXml(xml: string): FilterProfile[] {
 }
 
 export class FritzboxClient {
-  private host: string;
-  private port: number;
-  private username: string;
-  private password: string;
-
-  constructor() {
-    const settings = getSettings();
-    this.host = settings.fritzboxHost || 'fritz.box';
-    this.port = 49000;
-    this.username = settings.fritzboxUsername || '';
-    this.password = settings.fritzboxPassword || '';
-  }
-
   async testConnection(): Promise<{ success: boolean; profiles?: FilterProfile[]; error?: string }> {
     try {
-      const result = await soapCall(this.host, this.port, this.username, this.password, 'GetFilterProfiles', {});
+      const svc = await getFritzboxService();
+      const result = await svc.actions.GetFilterProfiles({});
       const xml = String(result?.NewFilterProfileList || '');
       const profiles = parseProfileListXml(xml);
       return { success: true, profiles };
     } catch (e: any) {
-      return { success: false, error: e.message };
+      return { success: false, error: e.message || 'Unbekannter Fehler' };
     }
   }
 
   async getProfiles(): Promise<FilterProfile[]> {
-    const result = await soapCall(this.host, this.port, this.username, this.password, 'GetFilterProfiles', {});
+    const svc = await getFritzboxService();
+    const result = await svc.actions.GetFilterProfiles({});
     const xml = String(result?.NewFilterProfileList || '');
     return parseProfileListXml(xml);
   }
 
   async getHostEntry(ip: string): Promise<HostEntry | null> {
     try {
-      const result = await soapCall(this.host, this.port, this.username, this.password, 'GetHostEntryByIP', {
-        NewIPv4Address: ip,
-      });
+      const svc = await getFritzboxService();
+      const entry = await svc.actions.GetHostEntryByIP({ NewIPv4Address: ip });
+      const wanResult = await svc.actions.GetWANAccessByIP({ NewIPv4Address: ip });
       return {
-        hostName: String(result?.NewHostName || ''),
+        hostName: String(entry?.NewHostName || ''),
         ipAddress: ip,
-        filterProfileID: String(result?.NewFilterProfileID || ''),
-        timeUsed: num(result?.NewTimeUsed),
-        timeMax: num(result?.NewTimeMax),
-        ticketsInAdvance: num(result?.NewTicketsInAdvance),
-        ticketValid: num(result?.NewTicketValid),
-        wanAccess: String(result?.NewWANAccess || 'unknown'),
+        filterProfileID: String(entry?.NewFilterProfileID || ''),
+        wanAccess: String(wanResult?.NewWANAccess || 'unknown'),
+        disallow: String(wanResult?.NewDisallow || '0'),
+        timeUsed: num(entry?.NewTimeUsed),
+        timeMax: num(entry?.NewTimeMax),
       };
     } catch { return null; }
   }
 
   async setWANAccess(ip: string, allow: boolean): Promise<void> {
-    await soapCall(this.host, this.port, this.username, this.password, 'DisallowWANAccessByIP', {
+    const svc = await getFritzboxService();
+    const newDisallow = allow ? 0 : 1;
+    await svc.actions.DisallowWANAccessByIP({
       NewIPv4Address: ip,
-      NewDisallow: allow ? '0' : '1',
+      NewDisallow: newDisallow,
     });
   }
 
-  async addTicketTime(ip: string): Promise<{ timeUsed: number; timeMax: number; ticketsInAdvance: number } | null> {
-    try {
-      const result = await soapCall(this.host, this.port, this.username, this.password, 'AddTicketTimeToHostEntryByIP', {
-        NewIPv4Address: ip,
-      });
-      return {
-        timeUsed: num(result?.NewTimeUsed),
-        timeMax: num(result?.NewTimeMax),
-        ticketsInAdvance: num(result?.NewTicketsInAdvance),
-      };
-    } catch { return null; }
-  }
-
-  async syncDevices(deviceIPs: string[], shouldHaveAccess: boolean): Promise<{ ip: string; success: boolean; error?: string }[]> {
-    const results: { ip: string; success: boolean; error?: string }[] = [];
+  async syncDevices(
+    deviceIPs: string[],
+    shouldHaveAccess: boolean
+  ): Promise<{ ip: string; success: boolean; verified: boolean; error?: string }[]> {
+    const results: { ip: string; success: boolean; verified: boolean; error?: string }[] = [];
     for (const ip of deviceIPs) {
       try {
         await this.setWANAccess(ip, shouldHaveAccess);
-        results.push({ ip, success: true });
+        const entry = await this.getHostEntry(ip);
+        const expectedDisallow = shouldHaveAccess ? '0' : '1';
+        const verified = entry?.disallow === expectedDisallow;
+        results.push({ ip, success: true, verified });
       } catch (e: any) {
-        results.push({ ip, success: false, error: e.message });
+        results.push({ ip, success: false, verified: false, error: e.message || 'Unbekannter Fehler beim Sync' });
       }
     }
     return results;

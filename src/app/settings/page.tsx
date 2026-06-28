@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from 'react'
 
-const SETTINGS_PASSWORD = 'Fritz123'
-
 export default function SettingsPage() {
   const [unlocked, setUnlocked] = useState(false)
   const [pwInput, setPwInput] = useState('')
@@ -49,14 +47,24 @@ export default function SettingsPage() {
       })
   }, [unlocked])
 
-  const handlePwSubmit = (e: React.FormEvent) => {
+  const handlePwSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (pwInput === SETTINGS_PASSWORD) {
-      sessionStorage.setItem('settings_unlocked', '1')
-      setUnlocked(true)
-      setPwError('')
-    } else {
-      setPwError('Falsches Passwort')
+    setPwError('')
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: pwInput }),
+      })
+      const result = await res.json()
+      if (result.success) {
+        sessionStorage.setItem('settings_unlocked', '1')
+        setUnlocked(true)
+      } else {
+        setPwError('Falsches Passwort')
+      }
+    } catch {
+      setPwError('Fehler bei Überprüfung')
     }
   }
 
@@ -147,13 +155,15 @@ export default function SettingsPage() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <form onSubmit={handlePwSubmit} className="bg-card border rounded-xl p-6 max-w-sm w-full space-y-4">
           <h1 className="text-xl font-bold text-center">Einstellungen</h1>
-          <p className="text-sm text-muted-foreground text-center">Passwort erforderlich</p>
+          <p className="text-sm text-muted-foreground text-center">
+            Eltern-Code eingeben, um die Einstellungen freizuschalten
+          </p>
           <input
             type="password"
             value={pwInput}
             onChange={e => { setPwInput(e.target.value); setPwError('') }}
             className="w-full border rounded-lg px-3 py-2 text-lg tracking-widest text-center bg-background"
-            placeholder="Passwort"
+            placeholder="Eltern-Code"
             autoFocus
           />
           {pwError && <p className="text-destructive text-sm text-center">{pwError}</p>}
@@ -336,7 +346,7 @@ export default function SettingsPage() {
       <section className="bg-card border rounded-lg p-4 space-y-4">
         <h2 className="font-semibold">Eltern-Code</h2>
         <p className="text-sm text-muted-foreground">
-          Mit diesem Code können Ausnahmen (z.B. Ferienmodus) freigegeben werden.
+          Mit diesem Code können Einstellungen geändert und Ausnahmen (z.B. Ferienmodus) freigegeben werden.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1.5">

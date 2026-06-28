@@ -1,10 +1,10 @@
 export interface TimeWindow {
-  start: string; // HH:mm format
-  end: string;   // HH:mm format
+  start: string;
+  end: string;
 }
 
 export interface DailySchedule {
-  date: string; // YYYY-MM-DD
+  date: string;
   timeWindows: TimeWindow[];
   isHolidayMode: boolean;
   parentCodeUsed: boolean;
@@ -27,8 +27,6 @@ export interface Settings {
   allowedEndSunThu: string;
   allowedStartFriSat: string;
   allowedEndFriSat: string;
-  holidayModeStart: string;
-  holidayModeEnd: string;
 }
 
 export interface FritzboxProfile {
