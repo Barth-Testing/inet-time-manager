@@ -6,7 +6,6 @@ import { addSyncLog } from './db';
 
 let started = false;
 let boundaryTimer: ReturnType<typeof setTimeout> | null = null;
-let checkTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSyncResult: SyncStatus = 'idle';
 let lastSyncTime: string | null = null;
 let lastSyncDetail: string | null = null;
@@ -55,7 +54,6 @@ function msUntil(targetMin: number): number {
 
 function clearTimers() {
   if (boundaryTimer) { clearTimeout(boundaryTimer); boundaryTimer = null; }
-  if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
 }
 
 async function syncDevices(shouldHaveAccess: boolean) {
@@ -80,46 +78,6 @@ async function syncDevices(shouldHaveAccess: boolean) {
     console.error('[SyncLoop]', e.message);
     addSyncLog({ scheduleDate: today, success: 0, errorMessage: e.message, createdAt: now.toISOString() });
   }
-}
-
-async function correctiveCheck() {
-  checkTimer = null;
-
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const today = format(now, 'yyyy-MM-dd');
-  const schedule = getSchedule(today);
-  if (!schedule?.timeWindows?.length) return;
-
-  const shouldHaveAccess = isInsideWindow(schedule.timeWindows, nowMin);
-  const expectedDisallow = shouldHaveAccess ? '0' : '1';
-
-  const settings = getSettings();
-  if (!settings.fritzboxPassword || !settings.childDeviceIPs.length) return;
-
-  try {
-    const client = new FritzboxClient();
-    const entries = await client.checkDevices(settings.childDeviceIPs);
-
-    const wrongIPs = entries
-      .filter(e => e.disallow !== expectedDisallow)
-      .map(e => e.ipAddress);
-
-    if (wrongIPs.length > 0) {
-      for (const ip of wrongIPs) {
-        await client.setWANAccess(ip, shouldHaveAccess);
-      }
-      console.log(`[SyncLoop] ${wrongIPs.length} Gerät(e) korrigiert (nur lesend erkannt)`);
-
-      lastSyncResult = 'success';
-      lastSyncTime = format(now, 'HH:mm:ss');
-      lastSyncDetail = `${wrongIPs.length} Gerät(e) korrigiert`;
-    }
-  } catch (e: any) {
-    console.error('[SyncLoop] Check fehlgeschlagen:', e.message);
-  }
-
-  checkTimer = setTimeout(correctiveCheck, 60_000);
 }
 
 function scheduleBoundary() {
@@ -158,10 +116,6 @@ async function onTransition() {
   const inside = isInsideWindow(schedule.timeWindows, nowMin);
   await syncDevices(inside);
 
-  if (schedule?.timeWindows?.length) {
-    checkTimer = setTimeout(correctiveCheck, 60_000);
-  }
-
   scheduleBoundary();
 }
 
@@ -177,7 +131,6 @@ export function startSyncLoop() {
   if (schedule?.timeWindows?.length) {
     const inside = isInsideWindow(schedule.timeWindows, nowMin);
     syncDevices(inside).then(() => {
-      checkTimer = setTimeout(correctiveCheck, 60_000);
       scheduleBoundary();
     });
   } else {
