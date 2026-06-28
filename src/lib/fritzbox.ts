@@ -166,6 +166,62 @@ export class FritzboxClient {
     return results;
   }
 
+  async setHostEntryFilterProfile(ip: string, profileId: string): Promise<void> {
+    const svc = await getFritzboxService();
+    await svc.actions.AddHostEntryToFilterProfile({
+      NewIPv4Address: ip,
+      NewFilterProfileID: profileId,
+    });
+  }
+
+  async findAllowProfileId(blockProfileName: string): Promise<string | null> {
+    try {
+      const profiles = await this.getProfiles();
+      const blockProfile = profiles.find(p => p.name === blockProfileName);
+      const nonBlock = profiles.find(p => p.name !== blockProfileName && p.name === '');
+      return nonBlock?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async syncDevices(
+    deviceIPs: string[],
+    shouldHaveAccess: boolean
+  ): Promise<{ ip: string; success: boolean; verified: boolean; error?: string }[]> {
+    const results: { ip: string; success: boolean; verified: boolean; error?: string }[] = [];
+
+    let allowProfileId: string | null = null;
+    if (shouldHaveAccess) {
+      const settings = getSettings();
+      allowProfileId = await this.findAllowProfileId(settings.accessProfileName).catch(() => null);
+    }
+
+    for (const ip of deviceIPs) {
+      try {
+        await this.setWANAccess(ip, shouldHaveAccess);
+
+        if (allowProfileId) {
+          await this.setHostEntryFilterProfile(ip, allowProfileId).catch(() => {});
+        } else if (!shouldHaveAccess) {
+          const settings = getSettings();
+          const blockProfile = (await this.getProfiles()).find(p => p.name === settings.accessProfileName);
+          if (blockProfile) {
+            await this.setHostEntryFilterProfile(ip, blockProfile.id).catch(() => {});
+          }
+        }
+
+        const entry = await this.getHostEntry(ip);
+        const expectedDisallow = shouldHaveAccess ? '0' : '1';
+        const verified = entry?.disallow === expectedDisallow;
+        results.push({ ip, success: true, verified });
+      } catch (e: any) {
+        results.push({ ip, success: false, verified: false, error: e.message || 'Unbekannter Fehler beim Sync' });
+      }
+    }
+    return results;
+  }
+
   async checkDevices(deviceIPs: string[]): Promise<HostEntry[]> {
     const entries: HostEntry[] = [];
     for (const ip of deviceIPs) {
