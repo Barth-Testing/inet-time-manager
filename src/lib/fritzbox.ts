@@ -159,12 +159,15 @@ export class FritzboxClient {
     try {
       const profiles = await this.getProfiles();
       console.log(`[Fritzbox] Profiles: ${profiles.map(p => `${p.id}(${p.name || '""'})`).join(', ')}`);
-      const withName = profiles.find(p => p.name !== blockProfileName && p.name !== '');
+      const withName = profiles.find(
+        p => p.name !== blockProfileName && p.name !== '' && p.name !== 'Gast'
+      );
       if (withName) {
         console.log(`[Fritzbox] Using named profile: ${withName.id} (${withName.name})`);
         return withName.id;
       }
       const emptyName = profiles.find(p => p.name !== blockProfileName && p.name === '');
+      console.log(`[Fritzbox] Using empty-name profile: ${emptyName?.id || 'none'}`);
       return emptyName?.id || null;
     } catch {
       return null;
