@@ -124,10 +124,10 @@ export default function HomePage() {
       if (result.success && result.data?.timeWindows?.length) {
         setTimeWindows(result.data.timeWindows)
       } else {
-        setTimeWindows([{ start: '14:00', end: '15:00' }])
+        setTimeWindows([])
       }
     } catch {
-      setTimeWindows([{ start: '14:00', end: '15:00' }])
+      setTimeWindows([])
     } finally {
       setLoading(false)
     }
@@ -145,38 +145,44 @@ export default function HomePage() {
     return !isRunning(window)
   }
 
-  const calcRemainingTotal = useCallback((windows: TimeWindow[]) => {
+  const calcTotalMinutes = useCallback((windows: TimeWindow[]) => {
     let total = 0
     for (const w of windows) {
-      if (isPast(w)) continue
       const startMin = parseTime(w.start)
       const endMin = parseTime(w.end)
-      if (isRunning(w)) {
-        total += endMin - nowMin
-      } else {
-        total += endMin - startMin
-      }
+      total += endMin - startMin
     }
-    return Math.max(0, total)
-  }, [nowMin])
+    return total
+  }, [])
 
   const [totalMinutes, setTotalMinutes] = useState(0)
 
   useEffect(() => {
-    setTotalMinutes(calcRemainingTotal(timeWindows))
-  }, [timeWindows, calcRemainingTotal, nowMin])
+    setTotalMinutes(calcTotalMinutes(timeWindows))
+  }, [timeWindows, calcTotalMinutes])
 
   const addWindow = () => {
+    if (calcTotalMinutes(timeWindows) >= maxMin) return
     const last = timeWindows[timeWindows.length - 1]
-    let start = '14:00'
-    let end = '15:00'
+    let start: string, end: string
     if (last) {
       const [h, m] = last.end.split(':').map(Number)
-      if (h < 21 || (h === 21 && m < 30)) {
-        const newH = Math.min(h + 1, 21)
+      const [ah, am] = allowedEnd.split(':').map(Number)
+      if (h < ah || (h === ah && m < am)) {
+        const newH = Math.min(h + 1, ah)
         start = `${String(newH).padStart(2, '0')}:00`
-        end = `${String(newH).padStart(2, '0')}:30`
+        const newEndH = Math.min(newH + 1, ah)
+        const newEndM = newEndH === ah ? am : 30
+        end = `${String(newEndH).padStart(2, '0')}:${String(newEndM).padStart(2, '0')}`
+      } else {
+        return
       }
+    } else {
+      start = getDefaultStart()
+      const [sh] = start.split(':').map(Number)
+      const [ah] = allowedEnd.split(':').map(Number)
+      const endH = Math.min(sh + 1, ah)
+      end = `${String(endH).padStart(2, '0')}:00`
     }
     setTimeWindows([...timeWindows, { start, end }])
   }
@@ -209,6 +215,11 @@ export default function HomePage() {
       if (sorted[i].end > sorted[i + 1].start) {
         return 'Zeitfenster dürfen sich nicht überschneiden'
       }
+    }
+
+    const total = calcTotalMinutes(timeWindows)
+    if (total > maxMin) {
+      return `Gesamtzeit (${formatDuration(total)}) überschreitet Maximum von ${maxHours}h`
     }
 
     return null
@@ -408,7 +419,7 @@ export default function HomePage() {
       <div className="bg-card border rounded-lg p-4 space-y-4">
         <div className="flex justify-between items-center">
           <h2 className="font-semibold">Zeitfenster</h2>
-          <button onClick={addWindow} className="text-sm text-primary hover:underline font-medium">
+          <button onClick={addWindow} disabled={calcTotalMinutes(timeWindows) >= maxMin} className="text-sm text-primary hover:underline font-medium disabled:text-muted-foreground disabled:no-underline disabled:cursor-not-allowed">
             + Zeitfenster hinzufügen
           </button>
         </div>
@@ -484,7 +495,7 @@ export default function HomePage() {
 
         <div className="border-t pt-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">Verbleibend: {formatDuration(totalMinutes)}</span>
+            <span className="text-sm font-medium">Geplant: {formatDuration(totalMinutes)}</span>
             <span className={`text-xs font-medium ${
               totalMinutes > maxMin ? 'text-destructive' :
               totalMinutes > maxMin * 0.9 ? 'text-yellow-600' :
